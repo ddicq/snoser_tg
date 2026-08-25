@@ -2,15 +2,17 @@ import os
 import time
 import random
 import requests
+import threading
 from fake_useragent import UserAgent
 from dotenv import load_dotenv
+from flask import Flask, request
 
 load_dotenv()
 
 # ========== КОНФИГ ==========
 TARGET = os.getenv("TARGET", "@mi1i_kitt1k")
 EMAIL_COUNT = int(os.getenv("MAX_EMAILS", 50))
-ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "796C5BAEA4C6D4A431D426B751C7A39E699A94388C40EC80CF097EE01E7614584E6F1A91B82312B21B7D19E8023EE882")  # HTTP API ключ
+ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "й796C5BAEA4C6D4A431D426B751C7A39E699A94388C40EC80CF097EE01E7614584E6F1A91B82312B21B7D19E8023EE882")
 PROXY_LIST_URL = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000"
 # =============================
 
@@ -71,18 +73,15 @@ class ComplaintSender:
         return random.choice(templates)
 
     def send_via_elastic_http(self):
-        """Отправка через HTTP API Elastic Email"""
         if not ELASTIC_API_KEY:
             print("[!] ELASTIC_API_KEY не указан. Использую заглушку.")
             return self.send_via_fallback()
 
-        # Генерируем уникальный from-адрес
         email_from = f"complaint_{random.randint(1000,999999)}@temp-mail.org"
         email_to = "abuse@telegram.org"
         subject = f"Complaint about user {self.target} — phishing"
         body = self.generate_body()
 
-        # Параметры для HTTP API
         data = {
             "apikey": ELASTIC_API_KEY,
             "from": email_from,
@@ -98,14 +97,12 @@ class ComplaintSender:
                 session.proxies.update(proxy)
             session.headers.update({"User-Agent": UserAgent().random})
 
-            # Отправка через HTTP API
             resp = session.post(
                 "https://api.elasticemail.com/v2/email/send",
                 data=data,
                 timeout=15
             )
 
-            # Проверка ответа
             if resp.status_code == 200:
                 result = resp.json()
                 if result.get("success"):
@@ -123,7 +120,6 @@ class ComplaintSender:
             return False
 
     def send_via_fallback(self):
-        """Заглушка для демонстрации"""
         email = f"temp_{random.randint(1000,999999)}@mailinator.com"
         print(f"[~] Имитация отправки с {email}")
         time.sleep(1)
@@ -149,15 +145,33 @@ class ComplaintSender:
             print("[+] Вероятность бана: 60-70%")
         return success_count
 
-def main():
-    proxy_manager.load(PROXY_LIST_URL)
-    if not TARGET or TARGET == "@username":
-        print("[!] Укажите TARGET в переменных окружения!")
-        return
-    if not ELASTIC_API_KEY:
-        print("[!] ELASTIC_API_KEY не найден. Работаем в демо-режиме.")
-    sender = ComplaintSender(TARGET)
-    sender.run()
+# ========== FLASK ЗАГЛУШКА (для Render) ==========
+app = Flask(__name__)
+
+@app.route('/')
+def health():
+    return "Ryzen is active", 200
+
+@app.route('/status')
+def status():
+    return {"status": "running", "target": TARGET}, 200
+
+def run_webserver():
+    port = int(os.getenv("PORT", 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+# Запуск веб-сервера в фоновом потоке
+threading.Thread(target=run_webserver, daemon=True).start()
+# ==================================================
 
 if __name__ == "__main__":
-    main()
+    # Загружаем прокси
+    proxy_manager.load(PROXY_LIST_URL)
+    
+    if not TARGET or TARGET == "@username":
+        print("[!] Укажите TARGET в переменных окружения!")
+    else:
+        if not ELASTIC_API_KEY:
+            print("[!] ELASTIC_API_KEY не найден. Работаем в демо-режиме.")
+        sender = ComplaintSender(TARGET)
+        sender.run()
