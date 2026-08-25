@@ -4,3 +4,4 @@ fake-useragent
 python-dotenv
 beautifulsoup4
 lxml
+socks
