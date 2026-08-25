@@ -1,7 +1,4 @@
-requests[socks]
-pysocks
+requests
 fake-useragent
 python-dotenv
-beautifulsoup4
-lxml
 socks
