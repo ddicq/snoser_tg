@@ -1,4 +1,6 @@
-requests
-string
-colorama
-base64
+requests[socks]
+pysocks
+fake-useragent
+python-dotenv
+beautifulsoup4
+lxml
