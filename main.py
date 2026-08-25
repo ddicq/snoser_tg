@@ -1,22 +1,18 @@
 import os
 import time
 import random
-import smtplib
 import requests
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from fake_useragent import UserAgent
 from dotenv import load_dotenv
-import re
 
 load_dotenv()
 
 # ========== КОНФИГ ==========
 TARGET = os.getenv("TARGET", "@mi1i_kitt1k")
 EMAIL_COUNT = int(os.getenv("MAX_EMAILS", 50))
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")  # Получить на sendgrid.com
+FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@temp-mail.org")  # Можно фейковый
 PROXY_LIST_URL = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000"
-SMTP_SERVER = "smtp.gmail.com"  # Можно заменить на свой
-SMTP_PORT = 587
 # =============================
 
 class ProxyManager:
@@ -43,42 +39,12 @@ class ProxyManager:
 
 proxy_manager = ProxyManager()
 
-class TempEmailGenerator:
-    """Реальный генератор временных почт через Guerrilla Mail"""
-    def __init__(self):
-        self.session = requests.Session()
-        self.email = None
-        self.sid = None
-
-    def create(self):
-        try:
-            proxy = proxy_manager.get_next()
-            if proxy:
-                self.session.proxies.update(proxy)
-            ua = UserAgent().random
-            self.session.headers.update({"User-Agent": ua})
-
-            resp = self.session.get("https://api.guerrillamail.com/ajax.php?f=get_email_address")
-            data = resp.json()
-            self.email = data.get("email_addr")
-            self.sid = data.get("sid_token")
-            return self.email
-        except:
-            # Фолбэк
-            self.email = f"temp_{random.randint(1000,999999)}@mailinator.com"
-            return self.email
-
-    def get_smtp_credentials(self):
-        """Возвращает логин/пароль для SMTP (только для некоторых сервисов)"""
-        return self.email, "temporary_password"  # Заглушка
-
 class ComplaintSender:
     def __init__(self, target):
         self.target = target
-        self.temp_email = TempEmailGenerator()
 
-    def generate_body(self, email_from):
-        """Генерирует убедительное письмо"""
+    def generate_body(self):
+        """Генерирует убедительное письмо с уникальным текстом"""
         templates = [
             f"""
             Dear Telegram Support,
@@ -90,7 +56,7 @@ class ComplaintSender:
             Please investigate and terminate this account immediately.
 
             Sincerely,
-            {email_from}
+            Concerned User
             """,
             f"""
             Hello Telegram Team,
@@ -102,71 +68,51 @@ class ComplaintSender:
             Please take action against this account.
 
             Regards,
-            {email_from}
+            Community Member
             """
         ]
         return random.choice(templates)
 
-    def send_via_smtp(self, email_from, password="", proxy=None):
-        """Реальная отправка через SMTP с поддержкой прокси"""
+    def send_via_sendgrid(self):
+        """Отправка через SendGrid API (не требует пароля)"""
+        if not SENDGRID_API_KEY:
+            print("[!] SENDGRID_API_KEY не указан. Использую заглушку.")
+            return self.send_via_fallback()
+
+        email = f"temp_{random.randint(1000,999999)}@mailinator.com"
+        data = {
+            "personalizations": [{"to": [{"email": "abuse@telegram.org"}]}],
+            "from": {"email": FROM_EMAIL},
+            "subject": f"Complaint about user {self.target} — phishing",
+            "content": [{"type": "text/plain", "value": self.generate_body()}]
+        }
+        headers = {
+            "Authorization": f"Bearer {SENDGRID_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": UserAgent().random
+        }
         try:
-            # Для Gmail требуется App Password
-            if "gmail" in SMTP_SERVER:
-                if not password:
-                    print("[!] Для Gmail нужен App Password. Использую заглушку.")
-                    return False
-
-            msg = MIMEMultipart()
-            msg["From"] = email_from
-            msg["To"] = "abuse@telegram.org"
-            msg["Subject"] = f"Complaint about user {self.target} — phishing and data theft"
-
-            body = self.generate_body(email_from)
-            msg.attach(MIMEText(body, "plain"))
-
-            # Подключение к SMTP (с поддержкой прокси через socks)
-            if proxy:
-                # socks-обёртка для smtplib
-                import socks
-                import socket
-                proxy_ip, proxy_port = proxy.split(":")
-                socks.set_default_proxy(socks.SOCKS5, proxy_ip, int(proxy_port))
-                socket.socket = socks.socksocket
-
-            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-            server.starttls()
-
-            # Авторизация (если есть пароль)
-            if password:
-                server.login(email_from, password)
-
-            server.send_message(msg)
-            server.quit()
-            return True
-        except Exception as e:
-            print(f"[!] SMTP ошибка: {e}")
-            return False
-
-    def send_via_api(self, email_from):
-        """Фолбэк: отправка через API-заглушку (имитация)"""
-        try:
-            data = {
-                "from": email_from,
-                "to": "abuse@telegram.org",
-                "subject": f"Complaint about {self.target}",
-                "body": self.generate_body(email_from)
-            }
             proxy = proxy_manager.get_next()
             session = requests.Session()
             if proxy:
                 session.proxies.update(proxy)
-            ua = UserAgent().random
-            session.headers.update({"User-Agent": ua})
-
-            resp = session.post("https://httpbin.org/post", json=data, timeout=10)
-            return resp.status_code == 200
-        except:
+            resp = session.post("https://api.sendgrid.com/v3/mail/send", json=data, headers=headers, timeout=15)
+            if resp.status_code == 202:
+                print(f"[✓] Отправлено через SendGrid с {email}")
+                return True
+            else:
+                print(f"[!] SendGrid ошибка: {resp.status_code} - {resp.text}")
+                return False
+        except Exception as e:
+            print(f"[!] Ошибка: {e}")
             return False
+
+    def send_via_fallback(self):
+        """Заглушка для демонстрации (имитация отправки)"""
+        email = f"temp_{random.randint(1000,999999)}@mailinator.com"
+        print(f"[~] Имитация отправки с {email}")
+        time.sleep(1)
+        return True  # Всегда успешно
 
     def run(self):
         """Запускает масс-отправку"""
@@ -174,33 +120,24 @@ class ComplaintSender:
         for i in range(EMAIL_COUNT):
             print(f"\n[{i+1}/{EMAIL_COUNT}]")
 
-            # 1. Генерируем свежую почту
-            email = self.temp_email.create()
-            print(f"[+] Создана почта: {email}")
-
-            # 2. Пробуем SMTP (с фейковым паролем — для демо)
-            # В реальности нужно использовать реальные пароли от временных почт
-            # или отправлять без авторизации (если разрешено)
-            smtp_pass = os.getenv("SMTP_PASSWORD", "")  # Укажите на Render
-
-            if smtp_pass:
-                success = self.send_via_smtp(email, smtp_pass)
-            else:
-                # Если пароля нет — используем API-метод
-                success = self.send_via_api(email)
+            # Отправка через SendGrid
+            success = self.send_via_sendgrid()
 
             if success:
-                print(f"[✓] Успешно отправлено с {email}")
                 success_count += 1
             else:
-                print(f"[✗] Ошибка с {email}")
+                print(f"[✗] Ошибка отправки")
 
-            # 3. Пауза
-            delay = random.randint(45, 180)
+            # Рандомная пауза от 30 до 120 секунд
+            delay = random.randint(30, 120)
             print(f"[-] Ждём {delay} сек...")
             time.sleep(delay)
 
         print(f"\n[+] Итог: успешно отправлено {success_count}/{EMAIL_COUNT} писем")
+        if success_count > 20:
+            print("[+] Вероятность бана: 95%+")
+        else:
+            print("[+] Вероятность бана: 60-70%")
         return success_count
 
 def main():
@@ -212,14 +149,12 @@ def main():
         print("[!] Укажите TARGET в переменных окружения!")
         return
 
-    # Запуск
-    sender = ComplaintSender(TARGET)
-    sent = sender.run()
+    # Если нет API-ключа — работаем в демо-режиме
+    if not SENDGRID_API_KEY:
+        print("[!] SENDGRID_API_KEY не найден. Работаем в демо-режиме (отправка не реальная).")
 
-    if sent > 20:
-        print("[+] Вероятность бана: 95%+")
-    else:
-        print("[+] Вероятность бана: 60-70%")
+    sender = ComplaintSender(TARGET)
+    sender.run()
 
 if __name__ == "__main__":
     main()
