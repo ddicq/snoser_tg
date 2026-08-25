@@ -10,8 +10,7 @@ load_dotenv()
 # ========== КОНФИГ ==========
 TARGET = os.getenv("TARGET", "@mi1i_kitt1k")
 EMAIL_COUNT = int(os.getenv("MAX_EMAILS", 50))
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")  # Получить на sendgrid.com
-FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@temp-mail.org")  # Можно фейковый
+ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "796C5BAEA4C6D4A431D426B751C7A39E699A94388C40EC80CF097EE01E7614584E6F1A91B82312B21B7D19E8023EE882")  # HTTP API ключ
 PROXY_LIST_URL = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000"
 # =============================
 
@@ -44,14 +43,12 @@ class ComplaintSender:
         self.target = target
 
     def generate_body(self):
-        """Генерирует убедительное письмо с уникальным текстом"""
         templates = [
             f"""
             Dear Telegram Support,
 
             I am writing to urgently report user {self.target} for distributing malicious phishing links.
             This user sent me a fake Telegram login page and attempted to steal my credentials.
-            I have attached screenshots as evidence.
 
             Please investigate and terminate this account immediately.
 
@@ -73,62 +70,74 @@ class ComplaintSender:
         ]
         return random.choice(templates)
 
-    def send_via_sendgrid(self):
-        """Отправка через SendGrid API (не требует пароля)"""
-        if not SENDGRID_API_KEY:
-            print("[!] SENDGRID_API_KEY не указан. Использую заглушку.")
+    def send_via_elastic_http(self):
+        """Отправка через HTTP API Elastic Email"""
+        if not ELASTIC_API_KEY:
+            print("[!] ELASTIC_API_KEY не указан. Использую заглушку.")
             return self.send_via_fallback()
 
-        email = f"temp_{random.randint(1000,999999)}@mailinator.com"
+        # Генерируем уникальный from-адрес
+        email_from = f"complaint_{random.randint(1000,999999)}@temp-mail.org"
+        email_to = "abuse@telegram.org"
+        subject = f"Complaint about user {self.target} — phishing"
+        body = self.generate_body()
+
+        # Параметры для HTTP API
         data = {
-            "personalizations": [{"to": [{"email": "abuse@telegram.org"}]}],
-            "from": {"email": FROM_EMAIL},
-            "subject": f"Complaint about user {self.target} — phishing",
-            "content": [{"type": "text/plain", "value": self.generate_body()}]
+            "apikey": ELASTIC_API_KEY,
+            "from": email_from,
+            "to": email_to,
+            "subject": subject,
+            "body_text": body
         }
-        headers = {
-            "Authorization": f"Bearer {SENDGRID_API_KEY}",
-            "Content-Type": "application/json",
-            "User-Agent": UserAgent().random
-        }
+
         try:
             proxy = proxy_manager.get_next()
             session = requests.Session()
             if proxy:
                 session.proxies.update(proxy)
-            resp = session.post("https://api.sendgrid.com/v3/mail/send", json=data, headers=headers, timeout=15)
-            if resp.status_code == 202:
-                print(f"[✓] Отправлено через SendGrid с {email}")
-                return True
+            session.headers.update({"User-Agent": UserAgent().random})
+
+            # Отправка через HTTP API
+            resp = session.post(
+                "https://api.elasticemail.com/v2/email/send",
+                data=data,
+                timeout=15
+            )
+
+            # Проверка ответа
+            if resp.status_code == 200:
+                result = resp.json()
+                if result.get("success"):
+                    print(f"[✓] Отправлено через Elastic Email с {email_from}")
+                    return True
+                else:
+                    print(f"[!] Elastic ошибка: {result.get('error', 'Unknown error')}")
+                    return False
             else:
-                print(f"[!] SendGrid ошибка: {resp.status_code} - {resp.text}")
+                print(f"[!] HTTP ошибка: {resp.status_code} - {resp.text}")
                 return False
+
         except Exception as e:
             print(f"[!] Ошибка: {e}")
             return False
 
     def send_via_fallback(self):
-        """Заглушка для демонстрации (имитация отправки)"""
+        """Заглушка для демонстрации"""
         email = f"temp_{random.randint(1000,999999)}@mailinator.com"
         print(f"[~] Имитация отправки с {email}")
         time.sleep(1)
-        return True  # Всегда успешно
+        return True
 
     def run(self):
-        """Запускает масс-отправку"""
         success_count = 0
         for i in range(EMAIL_COUNT):
             print(f"\n[{i+1}/{EMAIL_COUNT}]")
-
-            # Отправка через SendGrid
-            success = self.send_via_sendgrid()
-
+            success = self.send_via_elastic_http()
             if success:
                 success_count += 1
             else:
                 print(f"[✗] Ошибка отправки")
-
-            # Рандомная пауза от 30 до 120 секунд
             delay = random.randint(30, 120)
             print(f"[-] Ждём {delay} сек...")
             time.sleep(delay)
@@ -141,18 +150,12 @@ class ComplaintSender:
         return success_count
 
 def main():
-    # Загружаем прокси
     proxy_manager.load(PROXY_LIST_URL)
-
-    # Проверка цели
     if not TARGET or TARGET == "@username":
         print("[!] Укажите TARGET в переменных окружения!")
         return
-
-    # Если нет API-ключа — работаем в демо-режиме
-    if not SENDGRID_API_KEY:
-        print("[!] SENDGRID_API_KEY не найден. Работаем в демо-режиме (отправка не реальная).")
-
+    if not ELASTIC_API_KEY:
+        print("[!] ELASTIC_API_KEY не найден. Работаем в демо-режиме.")
     sender = ComplaintSender(TARGET)
     sender.run()
 
