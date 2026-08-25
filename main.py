@@ -5,14 +5,14 @@ import requests
 import threading
 from fake_useragent import UserAgent
 from dotenv import load_dotenv
-from flask import Flask, request
+from flask import Flask
 
 load_dotenv()
 
 # ========== КОНФИГ ==========
 TARGET = os.getenv("TARGET", "@mi1i_kitt1k")
 EMAIL_COUNT = int(os.getenv("MAX_EMAILS", 50))
-ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "й796C5BAEA4C6D4A431D426B751C7A39E699A94388C40EC80CF097EE01E7614584E6F1A91B82312B21B7D19E8023EE882")
+ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "796C5BAEA4C6D4A431D426B751C7A39E699A94388C40EC80CF097EE01E7614584E6F1A91B82312B21B7D19E8023EE882")
 PROXY_LIST_URL = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000"
 # =============================
 
@@ -145,7 +145,7 @@ class ComplaintSender:
             print("[+] Вероятность бана: 60-70%")
         return success_count
 
-# ========== FLASK ЗАГЛУШКА (для Render) ==========
+# ========== FLASK ЗАГЛУШКА ==========
 app = Flask(__name__)
 
 @app.route('/')
@@ -158,14 +158,11 @@ def status():
 
 def run_webserver():
     port = int(os.getenv("PORT", 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
-
-# Запуск веб-сервера в фоновом потоке
-threading.Thread(target=run_webserver, daemon=True).start()
-# ==================================================
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+# ====================================
 
 if __name__ == "__main__":
-    # Загружаем прокси
+    # 1. ЗАПУСКАЕМ ОСНОВНУЮ ЛОГИКУ (отправку писем)
     proxy_manager.load(PROXY_LIST_URL)
     
     if not TARGET or TARGET == "@username":
@@ -175,3 +172,7 @@ if __name__ == "__main__":
             print("[!] ELASTIC_API_KEY не найден. Работаем в демо-режиме.")
         sender = ComplaintSender(TARGET)
         sender.run()
+
+    # 2. ПОТОМ ЗАПУСКАЕМ FLASK (чтобы Render не падал)
+    print("[+] Запускаю Flask-заглушку...")
+    run_webserver()
