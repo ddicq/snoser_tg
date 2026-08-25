@@ -2,3 +2,4 @@ requests
 fake-useragent
 python-dotenv
 socks
+flask
